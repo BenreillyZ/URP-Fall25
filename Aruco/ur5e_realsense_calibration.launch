@@ -1,0 +1,144 @@
+import os
+from ament_index_python.packages import get_package_share_directory
+from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import Node
+
+def generate_launch_description():
+    
+    # 获取相关功能包的路径
+    realsense2_camera_pkg = get_package_share_directory('realsense2_camera')
+    ur_robot_driver_pkg = get_package_share_directory('ur_robot_driver')
+    ur5e_moveit_config_pkg = get_package_share_directory('ur5e_moveit_config')
+    easy_handeye_pkg = get_package_share_directory('easy_handeye')
+
+    # 声明启动参数，对应于ROS 1中的<arg>标签
+    declared_arguments = [
+        DeclareLaunchArgument(
+            'namespace_prefix',
+            default_value='ur5e_realsense_calibration',
+            description='Namespace prefix for the calibration process.'
+        ),
+        DeclareLaunchArgument(
+            'eye_on_hand',
+            default_value='false',
+            description='Whether the camera is mounted on the hand (eye-on-hand) or fixed (eye-to-hand).'
+        ),
+        DeclareLaunchArgument(
+            'robot_ip',
+            default_value='192.168.1.3',
+            description='The IP address of the UR5e robot.'
+        ),
+        DeclareLaunchArgument(
+            'marker_size',
+            default_value='0.045',
+            description='Size of the ArUco marker used, in meters.'
+        ),
+        DeclareLaunchArgument(
+            'marker_id',
+            default_value='200',
+            description='The ID of the ArUco marker used.'
+        )
+    ]
+
+    # 使用 LaunchConfiguration 来获取参数值
+    namespace_prefix = LaunchConfiguration('namespace_prefix')
+    eye_on_hand = LaunchConfiguration('eye_on_hand')
+    robot_ip = LaunchConfiguration('robot_ip')
+    marker_size = LaunchConfiguration('marker_size')
+    marker_id = LaunchConfiguration('marker_id')
+
+    # 1. 启动 RealSense 相机
+    # 对应 <include file="$(find realsense2_camera)/launch/rs_camera.launch">
+    realsense_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(realsense2_camera_pkg, 'launch', 'rs_launch.py')
+        ),
+        launch_arguments={
+            'color_height': '1080',
+            'color_width': '1920',
+            'color_fps': '30.0'
+        }.items()
+    )
+
+    # 2. 启动 ArUco 标记检测
+    # 对应 <node name="aruco_tracker" pkg="aruco_ros" type="single">
+    # 在ROS 2中，常用的包是 ros2_aruco
+    aruco_tracker_node = Node(
+        package='ros2_aruco',
+        executable='aruco_node',
+        name='aruco_tracker',
+        parameters=[{
+            'image_is_rectified': True,
+            'marker_size': marker_size,
+            'marker_id': marker_id,
+            'reference_frame': 'camera_color_optical_frame', # 与原文件保持一致
+            'camera_frame': 'camera_color_optical_frame',
+            'marker_frame': 'camera_marker', # 与原文件保持一致
+            'corner_refinement': 'LINES' # 对应<param name="corner_refinement" value="LINES" />
+        }],
+        remappings=[
+            ('/camera_info', '/camera/color/camera_info'),
+            ('/image', '/camera/color/image_raw')
+        ]
+    )
+
+    # 3. 启动 UR5e 机器人驱动和 MoveIt
+    # 对应 <include file="$(find ur_robot_driver)/launch/ur5e_bringup.launch">
+    # 在ROS 2中，通常使用 ur_control.launch.py
+    ur_driver_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(ur_robot_driver_pkg, 'launch', 'ur_control.launch.py')
+        ),
+        launch_arguments={
+            'ur_type': 'ur5e',
+            'robot_ip': robot_ip,
+            'launch_rviz': 'false' # 通常在标定中不需要RViz
+        }.items()
+    )
+    
+    # 对应 <include file="$(find ur5e_moveit_config)/launch/moveit_planning_execution.launch">
+    # 在ROS 2中，通常使用 ur_moveit.launch.py
+    ur_moveit_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(ur5e_moveit_config_pkg, 'launch', 'ur_moveit.launch.py')
+        ),
+        launch_arguments={
+            'ur_type': 'ur5e',
+            'robot_ip': robot_ip,
+            'launch_rviz': 'false' # 根据需要可以设置为true
+        }.items()
+    )
+
+    # 4. 启动 easy_handeye 标定
+    # 对应 <include file="$(find easy_handeye)/launch/calibrate.launch">
+    easy_handeye_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(easy_handeye_pkg, 'launch', 'calibrate.launch.py')
+        ),
+        launch_arguments={
+            'namespace_prefix': namespace_prefix,
+            'eye_on_hand': 'true',  # 原文件中这里是 true，这通常是正确的设置
+            'tracking_base_frame': 'camera_color_optical_frame',
+            'tracking_marker_frame': 'camera_marker',
+            'robot_base_frame': 'base',
+            'robot_effector_frame': 'tool0', # 在ROS 2 UR驱动中，通常是'tool0'而不是'tool0_controller'
+            'freehand_robot_movement': 'false',
+            'robot_velocity_scaling': '0.5',
+            'robot_acceleration_scaling': '0.2'
+        }.items()
+    )
+
+    # 将所有部分组合成一个完整的启动描述
+    return LaunchDescription(
+        declared_arguments + 
+        [
+            realsense_launch,
+            aruco_tracker_node,
+            ur_driver_launch,
+            ur_moveit_launch,
+            easy_handeye_launch
+        ]
+    )
