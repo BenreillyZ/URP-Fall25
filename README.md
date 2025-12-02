@@ -1,1 +1,67 @@
-# URP-Fall25
+# UR5e ArUco Detection (ROS 2)
+
+This repository guides you through operating a UR5e robot with ArUco marker detection using ROS 2. It covers launching detection scripts, configuring the TF tree, controlling the dashboard, and switching to velocity control.
+
+## Prerequisites
+* **Robot:** UR5e
+* **ROS Version:** ROS 2 (Noetic/Humble workflow implied)
+* **Hardware:** Realsense Camera
+
+---
+
+## 1. ArUco Detection
+Launch the script to detect markers via the camera.
+
+```bash
+# Launch ArUco detect script
+python3 /home/sirar/UR5e-Robot-Autonomously-Picks-Aruco-Markers-ROS-Noetic/ros2_aruco/detect.py
+
+
+---
+
+## 2. TF Tree transformation
+# Deactivate conda (if applicable) to avoid environment conflicts
+conda deactivate
+
+# OPTIONAL: View current frames
+ros2 run tf2_tools view_frames
+
+# Publish static transform (base_link -> camera frame)
+# Args: x y z yaw pitch roll parent child
+ros2 run tf2_ros static_transform_publisher 0 0 0 0 0 0 base_link realsense_color_optical_frame
+
+# Broadcast ArUco to TF
+python3 /home/sirar/UR5e-Robot-Autonomously-Picks-Aruco-Markers-ROS-Noetic/ros2_aruco/aruco_to_tf_broadcaster.py
+
+
+---
+
+## 3. Robot dashboard control
+# Play (Start robot)
+ros2 service call /dashboard_client/play std_srvs/srv/Trigger
+
+# Stop robot
+ros2 service call /dashboard_client/stop std_srvs/srv/Trigger
+
+
+---
+
+## 4. Controller Management (Switch to Velocity)
+# Check running controllers
+# ros2 control list_controllers
+
+# Switch to forward_velocity_controller
+ros2 service call /controller_manager/switch_controller \
+  controller_manager_msgs/srv/SwitchController \
+  "{activate_controllers: ['forward_velocity_controller'], \
+    deactivate_controllers: ['scaled_joint_trajectory_controller'], \
+    strictness: 1}"
+
+
+---
+
+## 5. Send Velocity Commands
+# Example: Move joint 6 at 0.05 speed
+# Data format: [j1, j2, j3, j4, j5, j6]
+ros2 topic pub /forward_velocity_controller/commands std_msgs/msg/Float64MultiArray "data: [0.0, 0.0, 0.0, 0.0, 0.0, 0.05]"
+
